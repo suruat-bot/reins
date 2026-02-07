@@ -12,9 +12,11 @@ import 'package:reins/Models/ollama_message.dart';
 import 'package:reins/Models/ollama_model.dart';
 import 'package:reins/Services/database_service.dart';
 import 'package:reins/Services/ollama_service.dart';
+import 'package:reins/Services/openclaw_service.dart';
 
 class ChatProvider extends ChangeNotifier {
   final OllamaService _ollamaService;
+  final OpenClawService _openclawService;
   final DatabaseService _databaseService;
 
   List<OllamaMessage> _messages = [];
@@ -65,14 +67,24 @@ class ChatProvider extends ChangeNotifier {
 
   ChatProvider({
     required OllamaService ollamaService,
+    required OpenClawService openclawService,
     required DatabaseService databaseService,
   })  : _ollamaService = ollamaService,
+        _openclawService = openclawService,
         _databaseService = databaseService {
     _initialize();
   }
 
+  /// Returns true if OpenClaw is enabled and should be used for chat.
+  bool get _useOpenClaw {
+    final settingsBox = Hive.box('settings');
+    return settingsBox.get('openclawEnabled', defaultValue: false) == true &&
+           settingsBox.get('openclawGatewayUrl', defaultValue: '').isNotEmpty;
+  }
+
   Future<void> _initialize() async {
     _updateOllamaServiceAddress();
+    _updateOpenClawServiceConfig();
 
     await _databaseService.open("ollama_chat.db");
     _chats = await _databaseService.getAllChats();
@@ -266,7 +278,10 @@ class ChatProvider extends ChangeNotifier {
   Future<OllamaMessage?> _streamOllamaMessage(OllamaChat associatedChat) async {
     if (_messages.isEmpty) return null;
 
-    final stream = _ollamaService.chatStream(_messages, chat: associatedChat);
+    // Use OpenClaw if enabled, otherwise use Ollama
+    final stream = _useOpenClaw
+        ? _openclawService.chatStream(_messages, chat: associatedChat)
+        : _ollamaService.chatStream(_messages, chat: associatedChat);
 
     OllamaMessage? streamingMessage;
     OllamaMessage? receivedMessage;
@@ -384,6 +399,9 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<List<OllamaModel>> fetchAvailableModels() async {
+    if (_useOpenClaw) {
+      return await _openclawService.listModels();
+    }
     return await _ollamaService.listModels();
   }
 
@@ -395,6 +413,26 @@ class ChatProvider extends ChangeNotifier {
       _ollamaService.baseUrl = settingsBox.get('serverAddress');
 
       // This will update empty chat state to dismiss "Tap to configure server address" message
+      notifyListeners();
+    });
+  }
+
+  void _updateOpenClawServiceConfig() {
+    final settingsBox = Hive.box('settings');
+    
+    _openclawService.baseUrl = settingsBox.get('openclawGatewayUrl');
+    _openclawService.authToken = settingsBox.get('openclawAuthToken');
+    _openclawService.agentId = settingsBox.get('openclawAgentId', defaultValue: 'main');
+
+    settingsBox.listenable(keys: [
+      "openclawEnabled",
+      "openclawGatewayUrl", 
+      "openclawAuthToken",
+      "openclawAgentId"
+    ]).addListener(() {
+      _openclawService.baseUrl = settingsBox.get('openclawGatewayUrl');
+      _openclawService.authToken = settingsBox.get('openclawAuthToken');
+      _openclawService.agentId = settingsBox.get('openclawAgentId', defaultValue: 'main');
       notifyListeners();
     });
   }

@@ -51,12 +51,14 @@ void main() async {
     MultiProvider(
       providers: [
         Provider(create: (_) => OllamaService()),
+        Provider(create: (_) => OpenClawService()),
         Provider(create: (_) => DatabaseService()),
         Provider(create: (_) => PermissionService()),
         Provider(create: (_) => ImageService()),
         ChangeNotifierProvider(
           create: (context) => ChatProvider(
             ollamaService: context.read(),
+            openclawService: context.read(),
             databaseService: context.read(),
           ),
         ),
